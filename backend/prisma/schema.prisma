@@ -1,0 +1,292 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"  // Change to "postgresql" for production
+  url      = env("DATABASE_URL")
+}
+
+// ===== USER & AUTHENTICATION =====
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String   // Hashed with bcrypt
+  name      String
+
+  // Subscription & plan
+  plan      SubscriptionPlan @default(FREE)
+  subscriptionStatus String?  // e.g., "active", "cancelled", "expired"
+  subscriptionId     String?  // RevenueCat subscription ID
+
+  // Gamification
+  xp        Int      @default(0)
+  level     Int      @default(1)
+  streak    Int      @default(0)
+  lastStudyDate DateTime?
+  dailyGoalMinutes Int @default(30)
+  dailyGoalCards   Int @default(20)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  subjects      Subject[]
+  flashcards    Flashcard[]
+  quizQuestions QuizQuestion[]
+  quizAttempts  QuizAttempt[]
+  mockExams     MockExam[]
+  mockExamAttempts MockExamAttempt[]
+  studySessions StudySession[]
+  achievements  UserAchievement[]
+  tutorMessages TutorMessage[]
+}
+
+enum SubscriptionPlan {
+  FREE
+  PRO
+}
+
+// ===== SUBJECTS =====
+
+model Subject {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  color       String   @default("#6366f1")  // Hex color
+  icon        String?
+  examDate    DateTime?
+  archived    Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  flashcards    Flashcard[]
+  quizQuestions QuizQuestion[]
+  mockExams     MockExam[]
+  tutorMessages TutorMessage[]
+
+  @@index([userId])
+}
+
+// ===== FLASHCARDS & SPACED REPETITION =====
+
+model Flashcard {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  front     String   // Question/prompt
+  back      String   // Answer/explanation
+
+  // Spaced repetition (SM-2 algorithm)
+  easeFactor      Float    @default(2.5)
+  intervalDays    Int      @default(1)
+  repetitions     Int      @default(0)
+  lastReviewedAt  DateTime?
+  scheduledReviewAt DateTime @default(now())
+
+  // Metadata
+  difficulty Difficulty @default(MEDIUM)
+  tags       String?    // JSON array of strings
+  mastered   Boolean    @default(false)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId, scheduledReviewAt])
+  @@index([subjectId])
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+// ===== QUIZZES =====
+
+model QuizQuestion {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  question       String
+  type           QuestionType
+  options        String?  // JSON array for MCQ options
+  correctAnswer  String
+  explanation    String?
+  difficulty     Difficulty @default(MEDIUM)
+  topics         String?  // JSON array of topic tags
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  quizAttemptAnswers QuizAttemptAnswer[]
+  mockExamQuestions  MockExamQuestion[]
+
+  @@index([userId, subjectId])
+}
+
+enum QuestionType {
+  MCQ
+  SHORT_ANSWER
+}
+
+model QuizAttempt {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String   // e.g., "Biology Quiz 1"
+  score     Int      // Percentage
+  totalQuestions Int
+  correctAnswers Int
+
+  startedAt  DateTime @default(now())
+  completedAt DateTime?
+
+  // Relations
+  answers    QuizAttemptAnswer[]
+
+  @@index([userId])
+}
+
+model QuizAttemptAnswer {
+  id           String   @id @default(uuid())
+  attemptId    String
+  attempt      QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId   String
+  question     QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  userAnswer   String
+  isCorrect    Boolean
+  timeSpentSeconds Int?
+
+  createdAt    DateTime @default(now())
+
+  @@index([attemptId])
+}
+
+// ===== MOCK EXAMS =====
+
+model MockExam {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  title     String
+  durationMinutes Int
+  totalQuestions  Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  questions MockExamQuestion[]
+  attempts  MockExamAttempt[]
+
+  @@index([userId, subjectId])
+}
+
+model MockExamQuestion {
+  id         String   @id @default(uuid())
+  examId     String
+  exam       MockExam @relation(fields: [examId], references: [id], onDelete: Cascade)
+  questionId String
+  question   QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  orderIndex Int  // Question order in exam
+
+  @@unique([examId, questionId])
+  @@index([examId])
+}
+
+model MockExamAttempt {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  examId    String
+  exam      MockExam @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  score     Int      // Percentage
+  totalQuestions Int
+  correctAnswers Int
+
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+
+  answers     String   // JSON: {questionId: userAnswer}
+
+  @@index([userId, examId])
+}
+
+// ===== STUDY SESSIONS =====
+
+model StudySession {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  startedAt   DateTime @default(now())
+  endedAt     DateTime?
+  durationMinutes Int @default(0)
+
+  cardsReviewed Int @default(0)
+  quizzesCompleted Int @default(0)
+  xpEarned Int @default(0)
+
+  @@index([userId, startedAt])
+}
+
+// ===== ACHIEVEMENTS =====
+
+model UserAchievement {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  achievementKey String  // e.g., "streak_3", "cards_100", "level_5"
+  title        String
+  description  String
+  unlockedAt   DateTime @default(now())
+
+  @@unique([userId, achievementKey])
+  @@index([userId])
+}
+
+// ===== AI TUTOR =====
+
+model TutorMessage {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  role      MessageRole
+  content   String
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, subjectId, createdAt])
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
